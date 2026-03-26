@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LINE Portal</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
+    body { background: #f0f2f5; height: 100vh; display: flex; align-items: center; justify-content: center; }
+
+    /* Login */
+    #loginPage { background: white; padding: 40px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); width: 340px; text-align: center; }
+    #loginPage h2 { color: #06c755; margin-bottom: 8px; font-size: 24px; }
+    #loginPage p { color: #888; margin-bottom: 24px; font-size: 14px; }
+    #loginPage input { width: 100%; padding: 12px 16px; border: 1px solid #ddd; border-radius: 8px; margin-bottom: 12px; font-size: 15px; outline: none; }
+    #loginPage input:focus { border-color: #06c755; }
+    #loginPage button { width: 100%; padding: 12px; background: #06c755; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; }
+    #loginPage button:hover { background: #05a847; }
+    #loginError { color: red; font-size: 13px; margin-top: 8px; }
+
+    /* Main Portal */
+    #portalPage { display: none; width: 100vw; height: 100vh; flex-direction: row; }
+
+    /* Sidebar */
+    #sidebar { width: 280px; background: white; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; }
+    #sidebarHeader { background: #06c755; color: white; padding: 16px 20px; }
+    #sidebarHeader h3 { font-size: 16px; }
+    #sidebarHeader p { font-size: 13px; opacity: 0.85; margin-top: 2px; }
+    #groupList { flex: 1; overflow-y: auto; }
+    .groupItem { padding: 14px 20px; cursor: pointer; border-bottom: 1px solid #f0f0f0; transition: background 0.2s; }
+    .groupItem:hover { background: #f9f9f9; }
+    .groupItem.active { background: #e8faf0; border-left: 4px solid #06c755; }
+    .groupItem h4 { font-size: 14px; color: #333; }
+    .groupItem p { font-size: 12px; color: #999; margin-top: 2px; }
+    #refreshBtn { padding: 12px; text-align: center; border-top: 1px solid #eee; }
+    #refreshBtn button { background: none; border: 1px solid #06c755; color: #06c755; padding: 8px 20px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+    #logoutBtn { padding: 12px; text-align: center; }
+    #logoutBtn button { background: none; border: none; color: #999; cursor: pointer; font-size: 13px; }
+
+    /* Chat Area */
+    #chatArea { flex: 1; display: flex; flex-direction: column; }
+    #chatHeader { background: white; padding: 16px 24px; border-bottom: 1px solid #e0e0e0; }
+    #chatHeader h3 { font-size: 16px; color: #333; }
+    #chatHeader p { font-size: 13px; color: #999; }
+    #messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+    .msg { max-width: 65%; padding: 10px 14px; border-radius: 12px; font-size: 14px; line-height: 1.5; }
+    .msg.customer { background: white; border: 1px solid #e0e0e0; align-self: flex-start; border-radius: 0 12px 12px 12px; }
+    .msg.agent { background: #06c755; color: white; align-self: flex-end; border-radius: 12px 0 12px 12px; }
+    .msgTime { font-size: 11px; color: #bbb; margin-top: 4px; }
+    .msgTime.right { text-align: right; }
+    #noGroup { flex: 1; display: flex; align-items: center; justify-content: center; color: #bbb; font-size: 15px; }
+
+    /* Input */
+    #inputArea { background: white; padding: 16px 20px; border-top: 1px solid #e0e0e0; display: flex; gap: 10px; }
+    #inputArea textarea { flex: 1; border: 1px solid #ddd; border-radius: 10px; padding: 10px 14px; font-size: 14px; resize: none; height: 44px; outline: none; font-family: inherit; }
+    #inputArea textarea:focus { border-color: #06c755; }
+    #inputArea button { background: #06c755; color: white; border: none; border-radius: 10px; padding: 0 20px; font-size: 14px; cursor: pointer; font-weight: bold; }
+    #inputArea button:hover { background: #05a847; }
+    #sendStatus { font-size: 12px; color: #999; padding: 4px 20px; background: white; }
+  </style>
+</head>
+<body>
+
+<!-- หน้า Login -->
+<div id="loginPage">
+  <h2>🟢 LINE Portal</h2>
+  <p>ระบบตอบข้อความลูกค้า</p>
+  <input type="text" id="username" placeholder="Username เช่น oo, pong, kai, benz" />
+  <input type="password" id="password" placeholder="Password" />
+  <button onclick="login()">เข้าสู่ระบบ</button>
+  <div id="loginError"></div>
+</div>
+
+<!-- หน้า Portal -->
+<div id="portalPage">
+  <div id="sidebar">
+    <div id="sidebarHeader">
+      <h3 id="agentName">พนักงาน</h3>
+      <p>กลุ่มที่รับผิดชอบ</p>
+    </div>
+    <div id="groupList"></div>
+    <div id="refreshBtn">
+      <button onclick="loadGroups()">🔄 รีเฟรช</button>
+    </div>
+    <div id="logoutBtn">
+      <button onclick="logout()">ออกจากระบบ</button>
+    </div>
+  </div>
+
+  <div id="chatArea">
+    <div id="noGroup">← เลือกกลุ่มที่ต้องการตอบ</div>
+    <div id="chatMain" style="display:none; flex-direction:column; height:100%;">
+      <div id="chatHeader">
+        <h3 id="chatGroupName">-</h3>
+        <p id="chatGroupId" style="font-size:11px; color:#ccc;"></p>
+      </div>
+      <div id="messages"></div>
+      <div id="sendStatus"></div>
+      <div id="inputArea">
+        <textarea id="msgInput" placeholder="พิมพ์ข้อความ..." onkeydown="handleKey(event)"></textarea>
+        <button onclick="sendMessage()">ส่ง</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const BASE = '';
+  let currentAgent = null;
+  let currentAgentName = null;
+  let currentGroupId = null;
+  let groups = [];
+  let refreshInterval = null;
+
+  function login() {
+    const agentId = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value.trim();
+    fetch(`${BASE}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentId, password })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        currentAgent = agentId;
+        currentAgentName = data.name;
+        document.getElementById('loginPage').style.display = 'none';
+        document.getElementById('portalPage').style.display = 'flex';
+        document.getElementById('agentName').textContent = data.name;
+        loadGroups();
+        refreshInterval = setInterval(loadGroups, 10000);
+      } else {
+        document.getElementById('loginError').textContent = data.error || 'Login ไม่สำเร็จ';
+      }
+    });
+  }
+
+  function logout() {
+    clearInterval(refreshInterval);
+    currentAgent = null;
+    currentGroupId = null;
+    document.getElementById('loginPage').style.display = 'flex';
+    document.getElementById('portalPage').style.display = 'none';
+    document.getElementById('username').value = '';
+    document.getElementById('password').value = '';
+  }
+
+  function loadGroups() {
+    if (!currentAgent) return;
+    fetch(`${BASE}/my-groups/${currentAgent}`)
+    .then(r => r.json())
+    .then(data => {
+      groups = data;
+      renderGroups();
+      if (currentGroupId) {
+        const g = groups.find(g => g.groupId === currentGroupId);
+        if (g) renderMessages(g);
+      }
+    });
+  }
+
+  function renderGroups() {
+    const list = document.getElementById('groupList');
+    if (groups.length === 0) {
+      list.innerHTML = '<div style="padding:20px;color:#bbb;text-align:center;font-size:13px;">ยังไม่มีกลุ่มที่รับผิดชอบ</div>';
+      return;
+    }
+    list.innerHTML = groups.map(g => `
+      <div class="groupItem ${g.groupId === currentGroupId ? 'active' : ''}" onclick="selectGroup('${g.groupId}')">
+        <h4>${g.groupName}</h4>
+        <p>${g.messages.length} ข้อความ</p>
+      </div>
+    `).join('');
+  }
+
+  function selectGroup(groupId) {
+    currentGroupId = groupId;
+    const g = groups.find(g => g.groupId === groupId);
+    if (!g) return;
+    document.getElementById('noGroup').style.display = 'none';
+    document.getElementById('chatMain').style.display = 'flex';
+    document.getElementById('chatGroupName').textContent = g.groupName;
+    document.getElementById('chatGroupId').textContent = groupId;
+    renderMessages(g);
+    renderGroups();
+  }
+
+  function renderMessages(g) {
+    const box = document.getElementById('messages');
+    box.innerHTML = g.messages.map(m => {
+      const time = new Date(m.time).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+      if (m.from === 'customer') {
+        return `<div><div class="msg customer">${m.text}</div><div class="msgTime">${time}</div></div>`;
+      } else {
+        return `<div><div class="msg agent">${m.text}</div><div class="msgTime right">${m.agentName || ''} · ${time}</div></div>`;
+      }
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function sendMessage() {
+    const text = document.getElementById('msgInput').value.trim();
+    if (!text || !currentGroupId) return;
+    document.getElementById('sendStatus').textContent = 'กำลังส่ง...';
+    fetch(`${BASE}/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupId: currentGroupId, text, agentId: currentAgent })
+    })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        document.getElementById('msgInput').value = '';
+        document.getElementById('sendStatus').textContent = 'ส่งสำเร็จ ✓';
+        loadGroups();
+        setTimeout(() => document.getElementById('sendStatus').textContent = '', 2000);
+      } else {
+        document.getElementById('sendStatus').textContent = 'ส่งไม่สำเร็จ: ' + data.error;
+      }
+    });
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+</script>
+</body>
+</html>
