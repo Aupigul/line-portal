@@ -1,0 +1,51 @@
+{
+  "name": "line-portal",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0"
+  }
+}
+```
+
+4. กด **Commit new file**
+
+---
+
+### ขั้นตอนที่ 2.6 — Deploy ขึ้น Railway
+
+1. กลับไปที่ **https://railway.app**
+2. กด **New Project** → **Deploy from GitHub repo**
+3. เลือก repo **line-portal** ที่เพิ่งสร้าง
+4. Railway จะเริ่ม Deploy อัตโนมัติ รอสักครู่
+5. เมื่อ Deploy เสร็จ กดเข้าไปใน Project → คลิก **Settings** → หา **Domains** → กด **Generate Domain**
+6. จะได้ URL หน้าตาแบบนี้ → `https://line-portal-xxx.railway.app` — **Copy เก็บไว้**
+
+---
+
+### ขั้นตอนที่ 2.7 — ใส่ค่า Environment Variables
+
+ใน Railway ต้องบอกระบบว่า LINE Token และ Admin Key คืออะไร
+
+1. คลิกเข้าไปใน Project → กด **Variables**
+2. เพิ่ม 2 ตัวนี้
+```
+LINE_TOKEN   =  [Token ที่ Copy ไว้จากขั้นตอน 1.4]
+ADMIN_KEY    =  [ตั้งรหัสลับอะไรก็ได้ เช่น mySecret2025]
+```
+
+3. Railway จะ Restart Server อัตโนมัติ
+
+---
+
+### ขั้นตอนที่ 2.8 — นำ URL ไปใส่ใน LINE Webhook
+
+1. กลับไปที่ **https://developers.line.biz**
+2. เข้า Channel เดิม → แท็บ **Messaging API**
+3. ช่อง **Webhook URL** ใส่ว่า
+```
+https://line-portal-xxx.railway.app/webhook
