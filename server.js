@@ -5,18 +5,16 @@ app.use(express.json());
 
 const CHANNEL_ACCESS_TOKEN = process.env.LINE_TOKEN;
 
-// เก็บข้อมูลว่ากลุ่มไหน assign ให้พนักงานคนไหน
-// และเก็บข้อความในแต่ละกลุ่ม
-let groupAssignments = {}; // { groupId: agentId }
-let messages = {};         // { groupId: [ {from, text, time}, ... ] }
-let agents = {             // พนักงานในระบบ (เพิ่มเองได้ภายหลัง)
+let groupAssignments = {};
+let messages = {};
+let agents = {
   "agent1": { name: "พนักงาน 1", password: "1234" },
   "agent2": { name: "พนักงาน 2", password: "1234" }
 };
 
 // LINE ส่งข้อความเข้ามาที่นี่
 app.post('/webhook', (req, res) => {
-  const events = req.body.events;
+  const events = req.body.events || [];
   events.forEach(event => {
     if (event.type === 'message' && event.message.type === 'text') {
       const groupId = event.source.groupId;
@@ -36,7 +34,7 @@ app.post('/webhook', (req, res) => {
   res.sendStatus(200);
 });
 
-// Portal: Login
+// Login
 app.post('/login', (req, res) => {
   const { agentId, password } = req.body;
   if (agents[agentId] && agents[agentId].password === password) {
@@ -46,40 +44,74 @@ app.post('/login', (req, res) => {
   }
 });
 
-// Portal: ดูกลุ่มที่ตัวเองรับผิดชอบ
+// ดูกลุ่มที่ตัวเองรับผิดชอบ
 app.get('/my-groups/:agentId', (req, res) => {
   const { agentId } = req.params;
   const myGroups = Object.entries(groupAssignments)
     .filter(([gId, aId]) => aId === agentId)
-    .map(([gId]) => ({ groupId: gId, messages: messages[gId] || [] }));
+    .map(([gId, aId, name]) => ({
+      groupId: gId,
+      groupName: groupNames[gId] || gId,
+      messages: messages[gId] || []
+    }));
   res.json(myGroups);
 });
 
-// Portal: ตอบข้อความ
+// เก็บชื่อกลุ่ม
+let groupNames = {};
+
+// ตอบข้อความ
 app.post('/send', async (req, res) => {
   const { groupId, text, agentId } = req.body;
   if (groupAssignments[groupId] !== agentId) {
     return res.json({ success: false, error: 'ไม่มีสิทธิ์' });
   }
-  await axios.post('https://api.line.me/v2/bot/message/push', {
-    to: groupId,
-    messages: [{ type: 'text', text }]
-  }, {
-    headers: { Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}` }
-  });
-  if (!messages[groupId]) messages[groupId] = [];
-  messages[groupId].push({ from: 'agent', agentId, text, time: new Date().toISOString() });
-  res.json({ success: true });
+  try {
+    await axios.post('https://api.line.me/v2/bot/message/push', {
+      to: groupId,
+      messages: [{ type: 'text', text }]
+    }, {
+      headers: { Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}` }
+    });
+    if (!messages[groupId]) messages[groupId] = [];
+    messages[groupId].push({ from: 'agent', agentId, text, time: new Date().toISOString() });
+    res.json({ success: true });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
 });
 
 // Admin: Assign กลุ่มให้พนักงาน
 app.post('/assign', (req, res) => {
-  const { groupId, agentId, adminKey } = req.body;
+  const { groupId, agentId, groupName, adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) {
     return res.json({ success: false, error: 'Admin key ผิด' });
   }
   groupAssignments[groupId] = agentId;
+  if (groupName) groupNames[groupId] = groupName;
   res.json({ success: true });
 });
 
-app.listen(3000, () => console.log('Server running'));
+// Admin: ดูกลุ่มทั้งหมด
+app.get('/admin/groups', (req, res) => {
+  const { adminKey } = req.query;
+  if (adminKey !== process.env.ADMIN_KEY) {
+    return res.json({ success: false, error: 'Admin key ผิด' });
+  }
+  const result = Object.entries(groupAssignments).map(([gId, aId]) => ({
+    groupId: gId,
+    groupName: groupNames[gId] || gId,
+    agentId: aId,
+    agentName: agents[aId] ? agents[aId].name : aId,
+    messageCount: (messages[gId] || []).length
+  }));
+  res.json(result);
+});
+
+// Health check
+app.get('/', (req, res) => {
+  res.send('LINE Portal Server is running!');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
