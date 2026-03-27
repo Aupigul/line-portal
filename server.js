@@ -1,42 +1,65 @@
 const express = require('express');
 const axios = require('axios');
+const { Pool } = require('pg');
 const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
 const CHANNEL_ACCESS_TOKEN = process.env.LINE_TOKEN;
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
 
-let groupAssignments = {};
-let messages = {};
-let groupNames = {};
+// สร้างตารางถ้ายังไม่มี
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS group_assignments (
+      group_id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      group_name TEXT
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY,
+      group_id TEXT NOT NULL,
+      from_type TEXT NOT NULL,
+      sender_id TEXT,
+      agent_id TEXT,
+      agent_name TEXT,
+      text TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  console.log('Database initialized');
+}
 
-let agents = {
-  "oo": { name: "อุ๊", password: "oo1234" },
-  "pong": { name: "พงษ์", password: "pong1234" },
-  "kai": { name: "ไก่", password: "kai1234" },
+initDB().catch(console.error);
+
+const agents = {
+  "oo":   { name: "อุ๊",    password: "oo1234" },
+  "pong": { name: "พงษ์",  password: "pong1234" },
+  "kai":  { name: "ไก่",   password: "kai1234" },
   "benz": { name: "เบ็นซ์", password: "benz1234" }
 };
 
 // LINE Webhook
-app.post('/webhook', (req, res) => {
-  console.log('WEBHOOK:', JSON.stringify(req.body));
+app.post('/webhook', async (req, res) => {
   const events = req.body.events || [];
-  events.forEach(event => {
+  for (const event of events) {
     if (event.type === 'message' && event.message.type === 'text') {
       const groupId = event.source.groupId;
       const text = event.message.text;
       const senderId = event.source.userId;
       if (groupId) {
-        if (!messages[groupId]) messages[groupId] = [];
-        messages[groupId].push({
-          from: 'customer',
-          senderId,
-          text,
-          time: new Date().toISOString()
-        });
+        await pool.query(
+          `INSERT INTO messages (group_id, from_type, sender_id, text) VALUES ($1, 'customer', $2, $3)`,
+          [groupId, senderId, text]
+        );
       }
     }
-  });
+  }
   res.sendStatus(200);
 });
 
@@ -51,22 +74,41 @@ app.post('/login', (req, res) => {
 });
 
 // ดูกลุ่มของตัวเอง
-app.get('/my-groups/:agentId', (req, res) => {
+app.get('/my-groups/:agentId', async (req, res) => {
   const { agentId } = req.params;
-  const myGroups = Object.entries(groupAssignments)
-    .filter(([gId, aId]) => aId === agentId)
-    .map(([gId]) => ({
-      groupId: gId,
-      groupName: groupNames[gId] || gId,
-      messages: messages[gId] || []
-    }));
-  res.json(myGroups);
+  const result = await pool.query(
+    `SELECT group_id, group_name FROM group_assignments WHERE agent_id = $1`,
+    [agentId]
+  );
+  const groups = await Promise.all(result.rows.map(async row => {
+    const msgs = await pool.query(
+      `SELECT from_type, sender_id, agent_id, agent_name, text, created_at FROM messages WHERE group_id = $1 ORDER BY created_at ASC`,
+      [row.group_id]
+    );
+    return {
+      groupId: row.group_id,
+      groupName: row.group_name || row.group_id,
+      messages: msgs.rows.map(m => ({
+        from: m.from_type,
+        senderId: m.sender_id,
+        agentId: m.agent_id,
+        agentName: m.agent_name,
+        text: m.text,
+        time: m.created_at
+      }))
+    };
+  }));
+  res.json(groups);
 });
 
 // ตอบข้อความ
 app.post('/send', async (req, res) => {
   const { groupId, text, agentId } = req.body;
-  if (groupAssignments[groupId] !== agentId) {
+  const check = await pool.query(
+    `SELECT agent_id FROM group_assignments WHERE group_id = $1`,
+    [groupId]
+  );
+  if (!check.rows.length || check.rows[0].agent_id !== agentId) {
     return res.json({ success: false, error: 'ไม่มีสิทธิ์ตอบกลุ่มนี้' });
   }
   try {
@@ -76,7 +118,10 @@ app.post('/send', async (req, res) => {
     }, {
       headers: { Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}` }
     });
-    messages[groupId].push({ from: 'agent', agentId, agentName: agents[agentId].name, text, time: new Date().toISOString() });
+    await pool.query(
+      `INSERT INTO messages (group_id, from_type, agent_id, agent_name, text) VALUES ($1, 'agent', $2, $3, $4)`,
+      [groupId, agentId, agents[agentId]?.name || agentId, text]
+    );
     res.json({ success: true });
   } catch (err) {
     res.json({ success: false, error: err.message });
@@ -84,7 +129,7 @@ app.post('/send', async (req, res) => {
 });
 
 // Admin: Assign กลุ่มให้พนักงาน
-app.post('/assign', (req, res) => {
+app.post('/assign', async (req, res) => {
   const { groupId, agentId, groupName, adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) {
     return res.json({ success: false, error: 'Admin key ผิด' });
@@ -92,28 +137,35 @@ app.post('/assign', (req, res) => {
   if (!agents[agentId]) {
     return res.json({ success: false, error: 'ไม่พบพนักงานนี้' });
   }
-  groupAssignments[groupId] = agentId;
-  if (groupName) groupNames[groupId] = groupName;
+  await pool.query(
+    `INSERT INTO group_assignments (group_id, agent_id, group_name)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (group_id) DO UPDATE SET agent_id = $2, group_name = $3`,
+    [groupId, agentId, groupName || groupId]
+  );
   res.json({ success: true, message: `Assign กลุ่ม "${groupName}" ให้ ${agents[agentId].name} แล้ว` });
 });
 
 // Admin: ดูกลุ่มทั้งหมด
-app.get('/admin/groups', (req, res) => {
+app.get('/admin/groups', async (req, res) => {
   const { adminKey } = req.query;
   if (adminKey !== process.env.ADMIN_KEY) {
     return res.json({ success: false, error: 'Admin key ผิด' });
   }
-  const result = Object.entries(groupAssignments).map(([gId, aId]) => ({
-    groupId: gId,
-    groupName: groupNames[gId] || gId,
-    agentId: aId,
-    agentName: agents[aId] ? agents[aId].name : aId,
-    messageCount: (messages[gId] || []).length
+  const result = await pool.query(`SELECT * FROM group_assignments`);
+  const groups = await Promise.all(result.rows.map(async row => {
+    const count = await pool.query(`SELECT COUNT(*) FROM messages WHERE group_id = $1`, [row.group_id]);
+    return {
+      groupId: row.group_id,
+      groupName: row.group_name,
+      agentId: row.agent_id,
+      agentName: agents[row.agent_id]?.name || row.agent_id,
+      messageCount: parseInt(count.rows[0].count)
+    };
   }));
-  res.json(result);
+  res.json(groups);
 });
 
-app.get('/health', (req, res) => res.send('LINE Portal Server is running!'));
 app.get('/', (req, res) => res.send('LINE Portal Server is running!'));
 
 const PORT = process.env.PORT || 3000;
