@@ -11,7 +11,6 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// สร้างตารางถ้ายังไม่มี
 async function initDB() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS group_assignments (
@@ -38,26 +37,56 @@ async function initDB() {
 initDB().catch(console.error);
 
 const agents = {
-  "oo":   { name: "อุ๊",    password: "oo1234" },
-  "pong": { name: "พงษ์",  password: "pong1234" },
-  "kai":  { name: "ไก่",   password: "kai1234" },
-  "benz": { name: "เบ็นซ์", password: "benz1234" }
+  "oo":   { name: "อุ๊",    password: "oo1234",   lineUserId: "U7662b0ed329611845d54422bac731972" },
+  "pong": { name: "พงษ์",  password: "pong1234", lineUserId: null },
+  "kai":  { name: "ไก่",   password: "kai1234",  lineUserId: null },
+  "benz": { name: "เบ็นซ์", password: "benz1234", lineUserId: null }
 };
+
+// ส่งแจ้งเตือนหาพนักงานผ่าน LINE
+async function notifyAgent(agentId, groupName, text) {
+  const agent = agents[agentId];
+  if (!agent || !agent.lineUserId) return;
+  try {
+    await axios.post('https://api.line.me/v2/bot/message/push', {
+      to: agent.lineUserId,
+      messages: [{
+        type: 'text',
+        text: `🔔 มีข้อความใหม่!\nกลุ่ม: ${groupName}\nข้อความ: ${text}`
+      }]
+    }, {
+      headers: { Authorization: `Bearer ${CHANNEL_ACCESS_TOKEN}` }
+    });
+  } catch (err) {
+    console.error('Notify error:', err.message);
+  }
+}
 
 // LINE Webhook
 app.post('/webhook', async (req, res) => {
-  console.log('WEBHOOK:', JSON.stringify(req.body));
   const events = req.body.events || [];
   for (const event of events) {
     if (event.type === 'message' && event.message.type === 'text') {
       const groupId = event.source.groupId;
       const text = event.message.text;
       const senderId = event.source.userId;
+
       if (groupId) {
+        // เก็บข้อความ
         await pool.query(
           `INSERT INTO messages (group_id, from_type, sender_id, text) VALUES ($1, 'customer', $2, $3)`,
           [groupId, senderId, text]
         );
+
+        // หาว่ากลุ่มนี้ assign ให้ใคร แล้วแจ้งเตือน
+        const result = await pool.query(
+          `SELECT agent_id, group_name FROM group_assignments WHERE group_id = $1`,
+          [groupId]
+        );
+        if (result.rows.length > 0) {
+          const { agent_id, group_name } = result.rows[0];
+          await notifyAgent(agent_id, group_name, text);
+        }
       }
     }
   }
