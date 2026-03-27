@@ -46,6 +46,7 @@ const agents = {
 
 // LINE Webhook
 app.post('/webhook', async (req, res) => {
+  console.log('WEBHOOK:', JSON.stringify(req.body));
   const events = req.body.events || [];
   for (const event of events) {
     if (event.type === 'message' && event.message.type === 'text') {
